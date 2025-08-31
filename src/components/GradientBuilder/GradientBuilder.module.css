@@ -1,0 +1,8 @@
+
+.gradient_stop {
+  left: var(--stop-position);
+}
+
+.gradient_stop_color {
+  background-color: var(--stop-color);
+}
