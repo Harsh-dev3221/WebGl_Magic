@@ -4,6 +4,8 @@
 
 A sophisticated WebGL shader playground for creating stunning animated gradient backgrounds using advanced procedural techniques, Three.js, and real-time controls.
 
+**GitHub Repository:** [https://github.com/Harsh-dev3221/WebGl_Magic](https://github.com/Harsh-dev3221/WebGl_Magic)
+
 ## How to Run This Project
 
 ### Prerequisites
@@ -14,10 +16,10 @@ A sophisticated WebGL shader playground for creating stunning animated gradient 
 
 ```sh
 # Step 1: Clone the repository
-git clone <YOUR_GIT_URL>
+git clone https://github.com/Harsh-dev3221/WebGl_Magic.git
 
 # Step 2: Navigate to the project directory
-cd <YOUR_PROJECT_NAME>
+cd WebGl_Magic
 
 # Step 3: Install the necessary dependencies
 npm i
@@ -72,3 +74,16 @@ npm run build
 ```
 
 The build artifacts will be stored in the `dist/` directory and can be deployed to any static hosting service.
+
+## Author
+
+**Harsh** - [GitHub Profile](https://github.com/Harsh-dev3221)
+
+## Repository
+
+- **GitHub:** [WebGl_Magic](https://github.com/Harsh-dev3221/WebGl_Magic)
+- **Issues:** [Report bugs or request features](https://github.com/Harsh-dev3221/WebGl_Magic/issues)
+
+## License
+
+This project is open source and available under the [MIT License](LICENSE).

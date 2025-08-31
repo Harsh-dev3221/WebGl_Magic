@@ -87,7 +87,7 @@ export const ShaderStudio = () => {
               asChild
               className="text-foreground/80 hover:text-foreground hover:bg-background/20"
             >
-              <a href="https://github.com" target="_blank" rel="noopener noreferrer">
+              <a href="https://github.com/Harsh-dev3221/WebGl_Magic" target="_blank" rel="noopener noreferrer">
                 <Github className="w-4 h-4 mr-2" />
                 Source
               </a>
