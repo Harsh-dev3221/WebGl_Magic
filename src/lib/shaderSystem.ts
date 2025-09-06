@@ -1,17 +1,20 @@
 import * as THREE from 'three';
-import { 
-  classicGradientShader, 
-  vectorFlowShader, 
-  turbulenceShader, 
+import {
+  classicGradientShader,
+  vectorFlowShader,
+  turbulenceShader,
   plasmaShader,
   fluidShader,
   particleShader,
   kaleidoscopeShader,
-  vertexShader 
+  vertexShader
 } from './shaders/fragmentShaders';
 import { QualityManager, QualityLevel } from './performance/qualityManager';
 import { GradientSampler } from './color/gradients';
 import { enhancedNoiseSystem } from './shaders/enhancedNoise';
+import { FluidSystem } from './fluid/FluidSystem';
+import { FluidConfig, defaultFluidConfig } from './shaders/fluidShaders';
+import { UniversalGrainConfig, defaultGrainConfig, addGrainToShader } from './shaders/universalGrain';
 
 export interface ShaderUniforms {
   [key: string]: { value: any };
@@ -36,9 +39,20 @@ export interface ShaderUniforms {
   u_segments?: { value: number };
   u_rotation?: { value: number };
   u_gradientTexture?: { value: THREE.DataTexture | null };
+
+  // Universal grain uniforms
+  u_grainIntensity: { value: number };
+  u_grainSize: { value: number };
+  u_grainSpeed: { value: number };
+  u_grainContrast: { value: number };
+  u_grainType: { value: number };
+  u_grainBlendMode: { value: number };
+
+  // Mouse interaction control
+  u_mouseInteractionEnabled: { value: number };
 }
 
-export type ShaderType = 'classic' | 'vector' | 'turbulence' | 'plasma' | 'fluid' | 'particle' | 'kaleidoscope';
+export type ShaderType = 'classic' | 'vector' | 'turbulence' | 'plasma' | 'fluid' | 'particle' | 'kaleidoscope' | 'fluidInteractive';
 
 export class ShaderSystem {
   private scene: THREE.Scene;
@@ -53,24 +67,26 @@ export class ShaderSystem {
   private clock: THREE.Clock;
   private mouse: THREE.Vector2;
   private currentShader: ShaderType = 'classic';
+  private fluidSystem: FluidSystem | null = null;
+  private grainConfig: UniversalGrainConfig;
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize Three.js components
     this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    this.renderer = new THREE.WebGLRenderer({ 
-      canvas, 
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
       antialias: true,
-      alpha: false 
+      alpha: false
     });
-    
+
     this.clock = new THREE.Clock();
     this.mouse = new THREE.Vector2();
-    
+
     // Set renderer properties
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    
+
     // Initialize uniforms
     this.uniforms = {
       u_time: { value: 0.0 },
@@ -93,9 +109,23 @@ export class ShaderSystem {
       u_particleSize: { value: 1.0 },
       u_segments: { value: 6 },
       u_rotation: { value: 0 },
-      u_gradientTexture: { value: null }
+      u_gradientTexture: { value: null },
+
+      // Universal grain uniforms
+      u_grainIntensity: { value: defaultGrainConfig.grainIntensity },
+      u_grainSize: { value: defaultGrainConfig.grainSize },
+      u_grainSpeed: { value: defaultGrainConfig.grainSpeed },
+      u_grainContrast: { value: defaultGrainConfig.grainContrast },
+      u_grainType: { value: defaultGrainConfig.grainType },
+      u_grainBlendMode: { value: defaultGrainConfig.grainBlendMode },
+
+      // Mouse interaction control
+      u_mouseInteractionEnabled: { value: 1.0 } // 1.0 = enabled, 0.0 = disabled
     };
-    
+
+    // Initialize grain configuration
+    this.grainConfig = { ...defaultGrainConfig };
+
     // Create geometry and material
     const geometry = new THREE.PlaneGeometry(2, 2);
     this.material = new THREE.ShaderMaterial({
@@ -104,13 +134,13 @@ export class ShaderSystem {
       fragmentShader: classicGradientShader,
       side: THREE.DoubleSide
     });
-    
+
     this.mesh = new THREE.Mesh(geometry, this.material);
     this.scene.add(this.mesh);
-    
+
     // Initialize quality manager
     this.qualityManager = new QualityManager();
-    
+
     // Event listeners
     this.setupEventListeners();
   }
@@ -127,7 +157,7 @@ export class ShaderSystem {
     window.addEventListener('resize', () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
-      
+
       this.renderer.setSize(width, height);
       this.uniforms.u_resolution.value.set(width, height);
     });
@@ -135,7 +165,25 @@ export class ShaderSystem {
 
   switchShader(type: ShaderType) {
     this.currentShader = type;
-    
+
+    // Handle fluid interactive mode separately
+    if (type === 'fluidInteractive') {
+      // Dispose existing fluid system if any
+      if (this.fluidSystem) {
+        this.fluidSystem.dispose();
+      }
+
+      // Create new fluid system
+      this.fluidSystem = new FluidSystem(this.renderer.domElement, defaultFluidConfig);
+      return;
+    } else {
+      // Dispose fluid system if switching away from it
+      if (this.fluidSystem) {
+        this.fluidSystem.dispose();
+        this.fluidSystem = null;
+      }
+    }
+
     let fragmentShader: string;
     switch (type) {
       case 'classic':
@@ -162,7 +210,9 @@ export class ShaderSystem {
       default:
         fragmentShader = classicGradientShader;
     }
-    
+
+    // All shaders now have grain support
+
     // Create new material with updated shader
     const newMaterial = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -170,7 +220,7 @@ export class ShaderSystem {
       fragmentShader,
       side: THREE.DoubleSide
     });
-    
+
     // Update mesh material
     (this.mesh.material as THREE.ShaderMaterial).dispose();
     this.mesh.material = newMaterial;
@@ -181,11 +231,11 @@ export class ShaderSystem {
     const c1 = new THREE.Color(color1);
     const c2 = new THREE.Color(color2);
     const c3 = new THREE.Color(color3);
-    
+
     this.uniforms.u_color1.value.set(c1.r, c1.g, c1.b);
     this.uniforms.u_color2.value.set(c2.r, c2.g, c2.b);
     this.uniforms.u_color3.value.set(c3.r, c3.g, c3.b);
-    
+
     // Force immediate visual update
     this.material.needsUpdate = true;
   }
@@ -201,15 +251,15 @@ export class ShaderSystem {
   // Update gradient texture for advanced color system
   updateGradientTexture(data: Float32Array) {
     if (!this.material) return;
-    
+
     const texture = new THREE.DataTexture(
-      data, 
-      data.length / 4, 1, 
-      THREE.RGBAFormat, 
+      data,
+      data.length / 4, 1,
+      THREE.RGBAFormat,
       THREE.FloatType
     );
     texture.needsUpdate = true;
-    
+
     if (this.uniforms.u_gradientTexture) {
       this.uniforms.u_gradientTexture.value = texture;
     }
@@ -241,7 +291,7 @@ export class ShaderSystem {
       // Neon palette
       ['#ff073a', '#39ff14', '#ff9600']
     ];
-    
+
     const randomPalette = colors[Math.floor(Math.random() * colors.length)];
     this.updateColors(randomPalette[0], randomPalette[1], randomPalette[2]);
   }
@@ -255,9 +305,14 @@ export class ShaderSystem {
       this.qualityManager.updatePerformanceMetrics(this.fps, deltaTime);
     }
     this.lastFrameTime = currentTime;
-    
-    this.uniforms.u_time.value = this.clock.getElapsedTime();
-    this.renderer.render(this.scene, this.camera);
+
+    // Handle fluid interactive rendering
+    if (this.currentShader === 'fluidInteractive' && this.fluidSystem) {
+      this.fluidSystem.render();
+    } else {
+      this.uniforms.u_time.value = this.clock.getElapsedTime();
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 
   // Get quality manager for external access
@@ -269,20 +324,20 @@ export class ShaderSystem {
   updateShaderQuality() {
     const defines = this.qualityManager.getShaderDefines();
     const settings = this.qualityManager.getQualitySettings();
-    
+
     // Update uniform values based on quality
     this.updateParameter('u_octaves', settings.octaves);
-    
+
     // Recreate material with quality defines and enhanced noise system
     const qualityFragmentShader = defines + '\n' + enhancedNoiseSystem + '\n' + this.getFragmentShaderForType(this.currentShader);
-    
+
     const newMaterial = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
       vertexShader,
       fragmentShader: qualityFragmentShader,
       side: THREE.DoubleSide
     });
-    
+
     // Update mesh material
     (this.mesh.material as THREE.ShaderMaterial).dispose();
     this.mesh.material = newMaterial;
@@ -290,30 +345,117 @@ export class ShaderSystem {
   }
 
   private getFragmentShaderForType(type: ShaderType): string {
+    let fragmentShader: string;
+
     switch (type) {
       case 'classic':
-        return classicGradientShader;
+        fragmentShader = classicGradientShader;
+        break;
       case 'vector':
-        return vectorFlowShader;
+        fragmentShader = vectorFlowShader;
+        break;
       case 'turbulence':
-        return turbulenceShader;
+        fragmentShader = turbulenceShader;
+        break;
       case 'plasma':
-        return plasmaShader;
+        fragmentShader = plasmaShader;
+        break;
       case 'fluid':
-        return fluidShader;
+        fragmentShader = fluidShader;
+        break;
       case 'particle':
-        return particleShader;
+        fragmentShader = particleShader;
+        break;
       case 'kaleidoscope':
-        return kaleidoscopeShader;
+        fragmentShader = kaleidoscopeShader;
+        break;
+      case 'fluidInteractive':
+        return ''; // Handled by FluidSystem
       default:
-        return classicGradientShader;
+        fragmentShader = classicGradientShader;
     }
+
+    // Add universal grain support to all shaders (except fluidInteractive)
+    if (type !== 'fluidInteractive') {
+      fragmentShader = addGrainToShader(fragmentShader);
+    }
+
+    return fragmentShader;
   }
 
   dispose() {
+    if (this.fluidSystem) {
+      this.fluidSystem.dispose();
+    }
     this.renderer.dispose();
     this.material.dispose();
     this.mesh.geometry.dispose();
+  }
+
+  // Get fluid system for external configuration
+  getFluidSystem(): FluidSystem | null {
+    return this.fluidSystem;
+  }
+
+  // Update fluid configuration
+  updateFluidConfig(config: Partial<FluidConfig>) {
+    if (this.fluidSystem) {
+      this.fluidSystem.updateConfig(config);
+    }
+  }
+
+  // Update fluid speed
+  updateFluidSpeed(speed: number) {
+    if (this.fluidSystem) {
+      this.fluidSystem.updateSpeed(speed);
+    }
+  }
+
+  // Update fluid scale
+  updateFluidScale(scale: number) {
+    if (this.fluidSystem) {
+      this.fluidSystem.updateScale(scale);
+    }
+  }
+
+  // Update universal grain configuration
+  updateGrainConfig(config: Partial<UniversalGrainConfig>) {
+    this.grainConfig = { ...this.grainConfig, ...config };
+
+    // Update uniforms
+    if (config.grainIntensity !== undefined) {
+      this.uniforms.u_grainIntensity.value = config.grainIntensity;
+    }
+    if (config.grainSize !== undefined) {
+      this.uniforms.u_grainSize.value = config.grainSize;
+    }
+    if (config.grainSpeed !== undefined) {
+      this.uniforms.u_grainSpeed.value = config.grainSpeed;
+    }
+    if (config.grainContrast !== undefined) {
+      this.uniforms.u_grainContrast.value = config.grainContrast;
+    }
+    if (config.grainType !== undefined) {
+      this.uniforms.u_grainType.value = config.grainType;
+    }
+    if (config.grainBlendMode !== undefined) {
+      this.uniforms.u_grainBlendMode.value = config.grainBlendMode;
+    }
+  }
+
+  // Get current grain configuration
+  getGrainConfig(): UniversalGrainConfig {
+    return { ...this.grainConfig };
+  }
+
+  // Update mouse interaction state
+  updateMouseInteraction(enabled: boolean) {
+    this.uniforms.u_mouseInteractionEnabled.value = enabled ? 1.0 : 0.0;
+
+    // Also update fluid system if it exists
+    if (this.fluidSystem) {
+      this.fluidSystem.updateMouseInteraction(enabled);
+    }
   }
 
   getRenderer() {

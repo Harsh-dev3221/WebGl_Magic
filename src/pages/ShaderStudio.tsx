@@ -21,7 +21,7 @@ export const ShaderStudio = () => {
     const parsedConfig = parseShareableURL(currentUrl);
     if (parsedConfig) {
       setSharedConfig(parsedConfig);
-      console.log('Loaded shared configuration:', parsedConfig);
+      // Shared configuration loaded from URL
     }
   }, []);
 

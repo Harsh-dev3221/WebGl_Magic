@@ -15,9 +15,35 @@ uniform float u_viscosity;
 uniform float u_pressure;
 uniform sampler2D u_gradientTexture;
 
+// Grain uniforms
+uniform float u_grainIntensity;
+uniform float u_grainSize;
+uniform float u_grainSpeed;
+uniform float u_grainContrast;
+uniform int u_grainType;
+uniform int u_grainBlendMode;
+
+// Mouse interaction control
+uniform float u_mouseInteractionEnabled;
+
 varying vec2 vUv;
 
 ${simplexNoise3D}
+
+// Compact grain system
+float grainRandom(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainRandomTime(vec2 st, float time) { return fract(sin(dot(st.xy + time, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainFilm(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain1 = grainRandomTime(floor(grainUV), time * u_grainSpeed); float grain2 = grainRandomTime(floor(grainUV + vec2(1.0, 0.0)), time * u_grainSpeed); float grain3 = grainRandomTime(floor(grainUV + vec2(0.0, 1.0)), time * u_grainSpeed); float grain4 = grainRandomTime(floor(grainUV + vec2(1.0, 1.0)), time * u_grainSpeed); vec2 f = fract(grainUV); float baseGrain = mix(mix(grain1, grain2, f.x), mix(grain3, grain4, f.x), f.y); float fineGrain = grainRandomTime(grainUV * 2.0, time * u_grainSpeed * 1.5) * 0.3; return pow(baseGrain * 0.7 + fineGrain, 0.8); }
+float grainDigital(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float baseNoise = grainRandomTime(floor(grainUV), time * u_grainSpeed); float temporalNoise = grainRandomTime(vec2(time * u_grainSpeed * 10.0), 0.0) * 0.1; return floor((baseNoise + temporalNoise) * 8.0) / 8.0; }
+float grainOrganic(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain = 0.0; float amplitude = 1.0; for (int i = 0; i < 3; i++) { grain += grainRandomTime(grainUV, time * u_grainSpeed) * amplitude; grainUV *= 2.0; amplitude *= 0.5; } return grain / 1.875; }
+float grainAnimated(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize + sin(time * u_grainSpeed) * 0.1; float angle = time * u_grainSpeed * 0.5; mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle)); grainUV = rotation * grainUV; return grainRandomTime(grainUV, time * u_grainSpeed); }
+float grainHalftone(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; vec2 center = floor(grainUV) + 0.5; float dist = length(grainUV - center); float noise = grainRandomTime(center, time * u_grainSpeed); return smoothstep(0.3 * noise, 0.5 * noise, dist); }
+vec3 blendOverlay(vec3 base, vec3 blend) { return mix(2.0 * base * blend, 1.0 - 2.0 * (1.0 - base) * (1.0 - blend), step(0.5, base)); }
+vec3 blendMultiply(vec3 base, vec3 blend) { return base * blend; }
+vec3 blendScreen(vec3 base, vec3 blend) { return 1.0 - (1.0 - base) * (1.0 - blend); }
+vec3 blendSoftLight(vec3 base, vec3 blend) { vec3 result1 = 2.0 * base * blend + base * base * (1.0 - 2.0 * blend); vec3 result2 = sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend); return mix(result1, result2, step(0.5, blend)); }
+vec3 blendLinear(vec3 base, vec3 blend) { return base + (blend - 0.5); }
+vec3 applyGrain(vec3 color, vec2 uv, float time) { if (u_grainIntensity <= 0.0) return color; float grain = 0.0; if (u_grainType == 0) grain = grainFilm(uv, time); else if (u_grainType == 1) grain = grainDigital(uv, time); else if (u_grainType == 2) grain = grainOrganic(uv, time); else if (u_grainType == 3) grain = grainAnimated(uv, time); else if (u_grainType == 4) grain = grainHalftone(uv, time); grain = clamp(grain * u_grainContrast, 0.0, 1.0); vec3 grainColor = vec3(grain); vec3 blendedColor; if (u_grainBlendMode == 0) blendedColor = blendOverlay(color, grainColor); else if (u_grainBlendMode == 1) blendedColor = blendMultiply(color, grainColor); else if (u_grainBlendMode == 2) blendedColor = blendScreen(color, grainColor); else if (u_grainBlendMode == 3) blendedColor = blendSoftLight(color, grainColor); else blendedColor = blendLinear(color, grainColor); return mix(color, blendedColor, u_grainIntensity); }
 
 // Fluid simulation using simplified Navier-Stokes
 vec2 curl(vec2 p) {
@@ -40,10 +66,12 @@ void main() {
     vec2 p = uv * u_scale + u_time * u_speed * 0.1;
     vec2 velocity = curl(p);
     
-    // Add mouse influence for fluid interaction
-    float mouseInfluence = 1.0 - length(uv - mouse);
-    mouseInfluence = smoothstep(0.0, 0.3, mouseInfluence);
-    velocity += (uv - mouse) * mouseInfluence * u_pressure;
+    // Add mouse influence for fluid interaction (if enabled)
+    if (u_mouseInteractionEnabled > 0.5) {
+        float mouseInfluence = 1.0 - length(uv - mouse);
+        mouseInfluence = smoothstep(0.0, 0.3, mouseInfluence);
+        velocity += (uv - mouse) * mouseInfluence * u_pressure;
+    }
     
     // Apply viscosity damping
     velocity *= u_viscosity;
@@ -60,7 +88,10 @@ void main() {
     // Add flow visualization
     float flowMagnitude = length(velocity);
     color += vec3(flowMagnitude * 0.5);
-    
+
+    // Apply advanced grain effect
+    color = applyGrain(color, uv, u_time);
+
     gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -80,9 +111,35 @@ uniform float u_particleCount;
 uniform float u_particleSize;
 uniform sampler2D u_gradientTexture;
 
+// Grain uniforms
+uniform float u_grainIntensity;
+uniform float u_grainSize;
+uniform float u_grainSpeed;
+uniform float u_grainContrast;
+uniform int u_grainType;
+uniform int u_grainBlendMode;
+
+// Mouse interaction control
+uniform float u_mouseInteractionEnabled;
+
 varying vec2 vUv;
 
 ${simplexNoise3D}
+
+// Compact grain system
+float grainRandom(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainRandomTime(vec2 st, float time) { return fract(sin(dot(st.xy + time, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainFilm(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain1 = grainRandomTime(floor(grainUV), time * u_grainSpeed); float grain2 = grainRandomTime(floor(grainUV + vec2(1.0, 0.0)), time * u_grainSpeed); float grain3 = grainRandomTime(floor(grainUV + vec2(0.0, 1.0)), time * u_grainSpeed); float grain4 = grainRandomTime(floor(grainUV + vec2(1.0, 1.0)), time * u_grainSpeed); vec2 f = fract(grainUV); float baseGrain = mix(mix(grain1, grain2, f.x), mix(grain3, grain4, f.x), f.y); float fineGrain = grainRandomTime(grainUV * 2.0, time * u_grainSpeed * 1.5) * 0.3; return pow(baseGrain * 0.7 + fineGrain, 0.8); }
+float grainDigital(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float baseNoise = grainRandomTime(floor(grainUV), time * u_grainSpeed); float temporalNoise = grainRandomTime(vec2(time * u_grainSpeed * 10.0), 0.0) * 0.1; return floor((baseNoise + temporalNoise) * 8.0) / 8.0; }
+float grainOrganic(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain = 0.0; float amplitude = 1.0; for (int i = 0; i < 3; i++) { grain += grainRandomTime(grainUV, time * u_grainSpeed) * amplitude; grainUV *= 2.0; amplitude *= 0.5; } return grain / 1.875; }
+float grainAnimated(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize + sin(time * u_grainSpeed) * 0.1; float angle = time * u_grainSpeed * 0.5; mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle)); grainUV = rotation * grainUV; return grainRandomTime(grainUV, time * u_grainSpeed); }
+float grainHalftone(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; vec2 center = floor(grainUV) + 0.5; float dist = length(grainUV - center); float noise = grainRandomTime(center, time * u_grainSpeed); return smoothstep(0.3 * noise, 0.5 * noise, dist); }
+vec3 blendOverlay(vec3 base, vec3 blend) { return mix(2.0 * base * blend, 1.0 - 2.0 * (1.0 - base) * (1.0 - blend), step(0.5, base)); }
+vec3 blendMultiply(vec3 base, vec3 blend) { return base * blend; }
+vec3 blendScreen(vec3 base, vec3 blend) { return 1.0 - (1.0 - base) * (1.0 - blend); }
+vec3 blendSoftLight(vec3 base, vec3 blend) { vec3 result1 = 2.0 * base * blend + base * base * (1.0 - 2.0 * blend); vec3 result2 = sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend); return mix(result1, result2, step(0.5, blend)); }
+vec3 blendLinear(vec3 base, vec3 blend) { return base + (blend - 0.5); }
+vec3 applyGrain(vec3 color, vec2 uv, float time) { if (u_grainIntensity <= 0.0) return color; float grain = 0.0; if (u_grainType == 0) grain = grainFilm(uv, time); else if (u_grainType == 1) grain = grainDigital(uv, time); else if (u_grainType == 2) grain = grainOrganic(uv, time); else if (u_grainType == 3) grain = grainAnimated(uv, time); else if (u_grainType == 4) grain = grainHalftone(uv, time); grain = clamp(grain * u_grainContrast, 0.0, 1.0); vec3 grainColor = vec3(grain); vec3 blendedColor; if (u_grainBlendMode == 0) blendedColor = blendOverlay(color, grainColor); else if (u_grainBlendMode == 1) blendedColor = blendMultiply(color, grainColor); else if (u_grainBlendMode == 2) blendedColor = blendScreen(color, grainColor); else if (u_grainBlendMode == 3) blendedColor = blendSoftLight(color, grainColor); else blendedColor = blendLinear(color, grainColor); return mix(color, blendedColor, u_grainIntensity); }
 
 // Hash function for pseudo-random numbers
 float hash(vec2 p) {
@@ -143,11 +200,16 @@ void main() {
     // Combine particles with background
     vec3 color = backgroundColor + particles;
     
-    // Add mouse interaction glow
-    float mouseInfluence = 1.0 - length(uv - mouse);
-    mouseInfluence = smoothstep(0.0, 0.4, mouseInfluence);
-    color += vec3(mouseInfluence * 0.5);
-    
+    // Add mouse interaction glow (if enabled)
+    if (u_mouseInteractionEnabled > 0.5) {
+        float mouseInfluence = 1.0 - length(uv - mouse);
+        mouseInfluence = smoothstep(0.0, 0.4, mouseInfluence);
+        color += vec3(mouseInfluence * 0.5);
+    }
+
+    // Apply advanced grain effect
+    color = applyGrain(color, uv, u_time);
+
     gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -167,9 +229,35 @@ uniform float u_segments;
 uniform float u_rotation;
 uniform sampler2D u_gradientTexture;
 
+// Grain uniforms
+uniform float u_grainIntensity;
+uniform float u_grainSize;
+uniform float u_grainSpeed;
+uniform float u_grainContrast;
+uniform int u_grainType;
+uniform int u_grainBlendMode;
+
+// Mouse interaction control
+uniform float u_mouseInteractionEnabled;
+
 varying vec2 vUv;
 
 ${simplexNoise3D}
+
+// Compact grain system
+float grainRandom(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainRandomTime(vec2 st, float time) { return fract(sin(dot(st.xy + time, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainFilm(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain1 = grainRandomTime(floor(grainUV), time * u_grainSpeed); float grain2 = grainRandomTime(floor(grainUV + vec2(1.0, 0.0)), time * u_grainSpeed); float grain3 = grainRandomTime(floor(grainUV + vec2(0.0, 1.0)), time * u_grainSpeed); float grain4 = grainRandomTime(floor(grainUV + vec2(1.0, 1.0)), time * u_grainSpeed); vec2 f = fract(grainUV); float baseGrain = mix(mix(grain1, grain2, f.x), mix(grain3, grain4, f.x), f.y); float fineGrain = grainRandomTime(grainUV * 2.0, time * u_grainSpeed * 1.5) * 0.3; return pow(baseGrain * 0.7 + fineGrain, 0.8); }
+float grainDigital(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float baseNoise = grainRandomTime(floor(grainUV), time * u_grainSpeed); float temporalNoise = grainRandomTime(vec2(time * u_grainSpeed * 10.0), 0.0) * 0.1; return floor((baseNoise + temporalNoise) * 8.0) / 8.0; }
+float grainOrganic(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain = 0.0; float amplitude = 1.0; for (int i = 0; i < 3; i++) { grain += grainRandomTime(grainUV, time * u_grainSpeed) * amplitude; grainUV *= 2.0; amplitude *= 0.5; } return grain / 1.875; }
+float grainAnimated(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize + sin(time * u_grainSpeed) * 0.1; float angle = time * u_grainSpeed * 0.5; mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle)); grainUV = rotation * grainUV; return grainRandomTime(grainUV, time * u_grainSpeed); }
+float grainHalftone(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; vec2 center = floor(grainUV) + 0.5; float dist = length(grainUV - center); float noise = grainRandomTime(center, time * u_grainSpeed); return smoothstep(0.3 * noise, 0.5 * noise, dist); }
+vec3 blendOverlay(vec3 base, vec3 blend) { return mix(2.0 * base * blend, 1.0 - 2.0 * (1.0 - base) * (1.0 - blend), step(0.5, base)); }
+vec3 blendMultiply(vec3 base, vec3 blend) { return base * blend; }
+vec3 blendScreen(vec3 base, vec3 blend) { return 1.0 - (1.0 - base) * (1.0 - blend); }
+vec3 blendSoftLight(vec3 base, vec3 blend) { vec3 result1 = 2.0 * base * blend + base * base * (1.0 - 2.0 * blend); vec3 result2 = sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend); return mix(result1, result2, step(0.5, blend)); }
+vec3 blendLinear(vec3 base, vec3 blend) { return base + (blend - 0.5); }
+vec3 applyGrain(vec3 color, vec2 uv, float time) { if (u_grainIntensity <= 0.0) return color; float grain = 0.0; if (u_grainType == 0) grain = grainFilm(uv, time); else if (u_grainType == 1) grain = grainDigital(uv, time); else if (u_grainType == 2) grain = grainOrganic(uv, time); else if (u_grainType == 3) grain = grainAnimated(uv, time); else if (u_grainType == 4) grain = grainHalftone(uv, time); grain = clamp(grain * u_grainContrast, 0.0, 1.0); vec3 grainColor = vec3(grain); vec3 blendedColor; if (u_grainBlendMode == 0) blendedColor = blendOverlay(color, grainColor); else if (u_grainBlendMode == 1) blendedColor = blendMultiply(color, grainColor); else if (u_grainBlendMode == 2) blendedColor = blendScreen(color, grainColor); else if (u_grainBlendMode == 3) blendedColor = blendSoftLight(color, grainColor); else blendedColor = blendLinear(color, grainColor); return mix(color, blendedColor, u_grainIntensity); }
 
 // Kaleidoscope transformation
 vec2 kaleidoscope(vec2 uv, float segments) {
@@ -189,8 +277,14 @@ vec2 kaleidoscope(vec2 uv, float segments) {
         angle = segmentAngle - angle;
     }
     
-    // Add rotation
-    angle += u_rotation + u_time * u_speed * 0.5;
+    // Add rotation with optional mouse interaction
+    float rotation = u_rotation + u_time * u_speed * 0.5;
+    if (u_mouseInteractionEnabled > 0.5) {
+        vec2 mouse = u_mouse / u_resolution;
+        float mouseInfluence = length(mouse - vec2(0.5)) * 2.0;
+        rotation += mouseInfluence * 3.14159;
+    }
+    angle += rotation;
     
     // Convert back to cartesian
     return vec2(cos(angle), sin(angle)) * radius + center;
@@ -218,7 +312,10 @@ void main() {
     // Add radial gradient effect
     float radialGradient = 1.0 - length(uv - vec2(0.5));
     color *= radialGradient * 1.5;
-    
+
+    // Apply advanced grain effect
+    color = applyGrain(color, uv, u_time);
+
     gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -241,12 +338,163 @@ uniform float u_lacunarity;
 uniform float u_persistence;
 uniform sampler2D u_gradientTexture;
 
+// Grain uniforms
+uniform float u_grainIntensity;
+uniform float u_grainSize;
+uniform float u_grainSpeed;
+uniform float u_grainContrast;
+uniform int u_grainType;
+uniform int u_grainBlendMode;
+
+// Mouse interaction control
+uniform float u_mouseInteractionEnabled;
+
 varying vec2 vUv;
 
 ${simplexNoise2D}
 ${simplexNoise3D}
 ${fbm}
 ${colorUtils}
+
+// Grain functions
+float grainRandom(vec2 st) {
+    return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
+float grainRandomTime(vec2 st, float time) {
+    return fract(sin(dot(st.xy + time, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
+float grainFilm(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize;
+
+    // Multi-octave film grain for realism
+    float grain1 = grainRandomTime(floor(grainUV), time * u_grainSpeed);
+    float grain2 = grainRandomTime(floor(grainUV + vec2(1.0, 0.0)), time * u_grainSpeed);
+    float grain3 = grainRandomTime(floor(grainUV + vec2(0.0, 1.0)), time * u_grainSpeed);
+    float grain4 = grainRandomTime(floor(grainUV + vec2(1.0, 1.0)), time * u_grainSpeed);
+
+    vec2 f = fract(grainUV);
+    float baseGrain = mix(mix(grain1, grain2, f.x), mix(grain3, grain4, f.x), f.y);
+
+    // Add fine detail layer
+    float fineGrain = grainRandomTime(grainUV * 2.0, time * u_grainSpeed * 1.5) * 0.3;
+
+    // Combine with film-like gamma curve
+    float finalGrain = baseGrain * 0.7 + fineGrain;
+    return pow(finalGrain, 0.8);
+}
+
+float grainDigital(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize;
+
+    // Clean digital noise with sharp transitions
+    float baseNoise = grainRandomTime(floor(grainUV), time * u_grainSpeed);
+
+    // Add temporal variation for digital flicker
+    float temporalNoise = grainRandomTime(vec2(time * u_grainSpeed * 10.0), 0.0) * 0.1;
+
+    // Quantize for digital look
+    float digitalGrain = floor((baseNoise + temporalNoise) * 8.0) / 8.0;
+    return digitalGrain;
+}
+
+float grainOrganic(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize;
+    float grain = 0.0;
+    float amplitude = 1.0;
+
+    // Multi-octave organic noise
+    for (int i = 0; i < 3; i++) {
+        grain += grainRandomTime(grainUV, time * u_grainSpeed) * amplitude;
+        grainUV *= 2.0;
+        amplitude *= 0.5;
+    }
+
+    return grain / 1.875; // Normalize
+}
+
+float grainAnimated(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize + sin(time * u_grainSpeed) * 0.1;
+
+    // Add rotation for more dynamic movement
+    float angle = time * u_grainSpeed * 0.5;
+    mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+    grainUV = rotation * grainUV;
+
+    return grainRandomTime(grainUV, time * u_grainSpeed);
+}
+
+float grainHalftone(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize;
+    vec2 center = floor(grainUV) + 0.5;
+    float dist = length(grainUV - center);
+    float noise = grainRandomTime(center, time * u_grainSpeed);
+    return smoothstep(0.3 * noise, 0.5 * noise, dist);
+}
+
+vec3 blendOverlay(vec3 base, vec3 blend) {
+    return mix(
+        2.0 * base * blend,
+        1.0 - 2.0 * (1.0 - base) * (1.0 - blend),
+        step(0.5, base)
+    );
+}
+
+vec3 blendMultiply(vec3 base, vec3 blend) {
+    return base * blend;
+}
+
+vec3 blendScreen(vec3 base, vec3 blend) {
+    return 1.0 - (1.0 - base) * (1.0 - blend);
+}
+
+vec3 blendSoftLight(vec3 base, vec3 blend) {
+    vec3 result1 = 2.0 * base * blend + base * base * (1.0 - 2.0 * blend);
+    vec3 result2 = sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend);
+    return mix(result1, result2, step(0.5, blend));
+}
+
+vec3 blendLinear(vec3 base, vec3 blend) {
+    return base + (blend - 0.5);
+}
+
+vec3 applyGrain(vec3 color, vec2 uv, float time) {
+    if (u_grainIntensity <= 0.0) {
+        return color;
+    }
+
+    float grain = 0.0;
+    if (u_grainType == 0) {
+        grain = grainFilm(uv, time);
+    } else if (u_grainType == 1) {
+        grain = grainDigital(uv, time);
+    } else if (u_grainType == 2) {
+        grain = grainOrganic(uv, time);
+    } else if (u_grainType == 3) {
+        grain = grainAnimated(uv, time);
+    } else if (u_grainType == 4) {
+        grain = grainHalftone(uv, time);
+    }
+
+    grain = clamp(grain * u_grainContrast, 0.0, 1.0);
+    vec3 grainColor = vec3(grain);
+
+    vec3 blendedColor;
+    if (u_grainBlendMode == 0) {
+        blendedColor = blendOverlay(color, grainColor);
+    } else if (u_grainBlendMode == 1) {
+        blendedColor = blendMultiply(color, grainColor);
+    } else if (u_grainBlendMode == 2) {
+        blendedColor = blendScreen(color, grainColor);
+    } else if (u_grainBlendMode == 3) {
+        blendedColor = blendSoftLight(color, grainColor);
+    } else {
+        blendedColor = blendLinear(color, grainColor);
+    }
+
+    return mix(color, blendedColor, u_grainIntensity);
+}
 
 void main() {
     vec2 uv = vUv;
@@ -262,17 +510,22 @@ void main() {
     // Combine noises for complexity
     float combined = (noise1 + noise2 * 0.5) * 0.5 + 0.5;
     
-    // Add mouse interaction
-    vec2 mouse = u_mouse / u_resolution;
-    float mouseDist = distance(uv, mouse);
-    combined += sin(mouseDist * 10.0 - u_time * 2.0) * 0.1;
+    // Add mouse interaction (if enabled)
+    if (u_mouseInteractionEnabled > 0.5) {
+        vec2 mouse = u_mouse / u_resolution;
+        float mouseDist = distance(uv, mouse);
+        combined += sin(mouseDist * 10.0 - u_time * 2.0) * 0.1;
+    }
     
     // Generate color from gradient texture or fallback to procedural
     vec3 color = texture2D(u_gradientTexture, vec2(combined, 0.5)).rgb;
     if (color.r + color.g + color.b < 0.01) {
         color = proceduralGradient(combined, u_color1, u_color2, u_color3);
     }
-    
+
+    // Apply advanced grain effect
+    color = applyGrain(color, uv, u_time);
+
     gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -295,6 +548,17 @@ uniform float u_lacunarity;
 uniform float u_persistence;
 uniform sampler2D u_gradientTexture;
 
+// Grain uniforms
+uniform float u_grainIntensity;
+uniform float u_grainSize;
+uniform float u_grainSpeed;
+uniform float u_grainContrast;
+uniform int u_grainType;
+uniform int u_grainBlendMode;
+
+// Mouse interaction control
+uniform float u_mouseInteractionEnabled;
+
 varying vec2 vUv;
 
 ${simplexNoise2D}
@@ -302,6 +566,80 @@ ${simplexNoise3D}
 ${fbm}
 ${curlNoise}
 ${colorUtils}
+
+// Grain functions (same as classic shader)
+float grainRandom(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainRandomTime(vec2 st, float time) { return fract(sin(dot(st.xy + time, vec2(12.9898, 78.233))) * 43758.5453123); }
+
+float grainFilm(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize;
+    float grain1 = grainRandomTime(floor(grainUV), time * u_grainSpeed);
+    float grain2 = grainRandomTime(floor(grainUV + vec2(1.0, 0.0)), time * u_grainSpeed);
+    float grain3 = grainRandomTime(floor(grainUV + vec2(0.0, 1.0)), time * u_grainSpeed);
+    float grain4 = grainRandomTime(floor(grainUV + vec2(1.0, 1.0)), time * u_grainSpeed);
+    vec2 f = fract(grainUV);
+    float baseGrain = mix(mix(grain1, grain2, f.x), mix(grain3, grain4, f.x), f.y);
+    float fineGrain = grainRandomTime(grainUV * 2.0, time * u_grainSpeed * 1.5) * 0.3;
+    return pow(baseGrain * 0.7 + fineGrain, 0.8);
+}
+
+float grainDigital(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize;
+    float baseNoise = grainRandomTime(floor(grainUV), time * u_grainSpeed);
+    float temporalNoise = grainRandomTime(vec2(time * u_grainSpeed * 10.0), 0.0) * 0.1;
+    return floor((baseNoise + temporalNoise) * 8.0) / 8.0;
+}
+
+float grainOrganic(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize;
+    float grain = 0.0; float amplitude = 1.0;
+    for (int i = 0; i < 3; i++) {
+        grain += grainRandomTime(grainUV, time * u_grainSpeed) * amplitude;
+        grainUV *= 2.0; amplitude *= 0.5;
+    }
+    return grain / 1.875;
+}
+
+float grainAnimated(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize + sin(time * u_grainSpeed) * 0.1;
+    float angle = time * u_grainSpeed * 0.5;
+    mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+    grainUV = rotation * grainUV;
+    return grainRandomTime(grainUV, time * u_grainSpeed);
+}
+
+float grainHalftone(vec2 uv, float time) {
+    vec2 grainUV = uv * u_grainSize;
+    vec2 center = floor(grainUV) + 0.5;
+    float dist = length(grainUV - center);
+    float noise = grainRandomTime(center, time * u_grainSpeed);
+    return smoothstep(0.3 * noise, 0.5 * noise, dist);
+}
+
+vec3 blendOverlay(vec3 base, vec3 blend) { return mix(2.0 * base * blend, 1.0 - 2.0 * (1.0 - base) * (1.0 - blend), step(0.5, base)); }
+vec3 blendMultiply(vec3 base, vec3 blend) { return base * blend; }
+vec3 blendScreen(vec3 base, vec3 blend) { return 1.0 - (1.0 - base) * (1.0 - blend); }
+vec3 blendSoftLight(vec3 base, vec3 blend) { vec3 result1 = 2.0 * base * blend + base * base * (1.0 - 2.0 * blend); vec3 result2 = sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend); return mix(result1, result2, step(0.5, blend)); }
+vec3 blendLinear(vec3 base, vec3 blend) { return base + (blend - 0.5); }
+
+vec3 applyGrain(vec3 color, vec2 uv, float time) {
+    if (u_grainIntensity <= 0.0) return color;
+    float grain = 0.0;
+    if (u_grainType == 0) grain = grainFilm(uv, time);
+    else if (u_grainType == 1) grain = grainDigital(uv, time);
+    else if (u_grainType == 2) grain = grainOrganic(uv, time);
+    else if (u_grainType == 3) grain = grainAnimated(uv, time);
+    else if (u_grainType == 4) grain = grainHalftone(uv, time);
+    grain = clamp(grain * u_grainContrast, 0.0, 1.0);
+    vec3 grainColor = vec3(grain);
+    vec3 blendedColor;
+    if (u_grainBlendMode == 0) blendedColor = blendOverlay(color, grainColor);
+    else if (u_grainBlendMode == 1) blendedColor = blendMultiply(color, grainColor);
+    else if (u_grainBlendMode == 2) blendedColor = blendScreen(color, grainColor);
+    else if (u_grainBlendMode == 3) blendedColor = blendSoftLight(color, grainColor);
+    else blendedColor = blendLinear(color, grainColor);
+    return mix(color, blendedColor, u_grainIntensity);
+}
 
 void main() {
     vec2 uv = vUv;
@@ -327,11 +665,13 @@ void main() {
     float flowMagnitude = length(flow.xy);
     combined += flowMagnitude * 0.2;
     
-    // Mouse interaction with vector field
-    vec2 mouse = u_mouse / u_resolution;
-    vec2 mouseForce = (uv - mouse) * 2.0;
-    float mouseInfluence = exp(-dot(mouseForce, mouseForce) * 5.0);
-    combined += mouseInfluence * 0.3;
+    // Mouse interaction with vector field (if enabled)
+    if (u_mouseInteractionEnabled > 0.5) {
+        vec2 mouse = u_mouse / u_resolution;
+        vec2 mouseForce = (uv - mouse) * 2.0;
+        float mouseInfluence = exp(-dot(mouseForce, mouseForce) * 5.0);
+        combined += mouseInfluence * 0.3;
+    }
     
     // Generate color from gradient texture or fallback to procedural
     vec3 color = texture2D(u_gradientTexture, vec2(combined, 0.5)).rgb;
@@ -341,7 +681,10 @@ void main() {
     
     // Add flow-based color shifts
     color += flow * 0.1;
-    
+
+    // Apply advanced grain effect
+    color = applyGrain(color, uv, u_time);
+
     gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -364,12 +707,38 @@ uniform float u_lacunarity;
 uniform float u_persistence;
 uniform sampler2D u_gradientTexture;
 
+// Grain uniforms
+uniform float u_grainIntensity;
+uniform float u_grainSize;
+uniform float u_grainSpeed;
+uniform float u_grainContrast;
+uniform int u_grainType;
+uniform int u_grainBlendMode;
+
+// Mouse interaction control
+uniform float u_mouseInteractionEnabled;
+
 varying vec2 vUv;
 
 ${simplexNoise2D}
 ${simplexNoise3D}
 ${fbm}
 ${colorUtils}
+
+// Compact grain system
+float grainRandom(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainRandomTime(vec2 st, float time) { return fract(sin(dot(st.xy + time, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainFilm(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain1 = grainRandomTime(floor(grainUV), time * u_grainSpeed); float grain2 = grainRandomTime(floor(grainUV + vec2(1.0, 0.0)), time * u_grainSpeed); float grain3 = grainRandomTime(floor(grainUV + vec2(0.0, 1.0)), time * u_grainSpeed); float grain4 = grainRandomTime(floor(grainUV + vec2(1.0, 1.0)), time * u_grainSpeed); vec2 f = fract(grainUV); float baseGrain = mix(mix(grain1, grain2, f.x), mix(grain3, grain4, f.x), f.y); float fineGrain = grainRandomTime(grainUV * 2.0, time * u_grainSpeed * 1.5) * 0.3; return pow(baseGrain * 0.7 + fineGrain, 0.8); }
+float grainDigital(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float baseNoise = grainRandomTime(floor(grainUV), time * u_grainSpeed); float temporalNoise = grainRandomTime(vec2(time * u_grainSpeed * 10.0), 0.0) * 0.1; return floor((baseNoise + temporalNoise) * 8.0) / 8.0; }
+float grainOrganic(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain = 0.0; float amplitude = 1.0; for (int i = 0; i < 3; i++) { grain += grainRandomTime(grainUV, time * u_grainSpeed) * amplitude; grainUV *= 2.0; amplitude *= 0.5; } return grain / 1.875; }
+float grainAnimated(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize + sin(time * u_grainSpeed) * 0.1; float angle = time * u_grainSpeed * 0.5; mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle)); grainUV = rotation * grainUV; return grainRandomTime(grainUV, time * u_grainSpeed); }
+float grainHalftone(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; vec2 center = floor(grainUV) + 0.5; float dist = length(grainUV - center); float noise = grainRandomTime(center, time * u_grainSpeed); return smoothstep(0.3 * noise, 0.5 * noise, dist); }
+vec3 blendOverlay(vec3 base, vec3 blend) { return mix(2.0 * base * blend, 1.0 - 2.0 * (1.0 - base) * (1.0 - blend), step(0.5, base)); }
+vec3 blendMultiply(vec3 base, vec3 blend) { return base * blend; }
+vec3 blendScreen(vec3 base, vec3 blend) { return 1.0 - (1.0 - base) * (1.0 - blend); }
+vec3 blendSoftLight(vec3 base, vec3 blend) { vec3 result1 = 2.0 * base * blend + base * base * (1.0 - 2.0 * blend); vec3 result2 = sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend); return mix(result1, result2, step(0.5, blend)); }
+vec3 blendLinear(vec3 base, vec3 blend) { return base + (blend - 0.5); }
+vec3 applyGrain(vec3 color, vec2 uv, float time) { if (u_grainIntensity <= 0.0) return color; float grain = 0.0; if (u_grainType == 0) grain = grainFilm(uv, time); else if (u_grainType == 1) grain = grainDigital(uv, time); else if (u_grainType == 2) grain = grainOrganic(uv, time); else if (u_grainType == 3) grain = grainAnimated(uv, time); else if (u_grainType == 4) grain = grainHalftone(uv, time); grain = clamp(grain * u_grainContrast, 0.0, 1.0); vec3 grainColor = vec3(grain); vec3 blendedColor; if (u_grainBlendMode == 0) blendedColor = blendOverlay(color, grainColor); else if (u_grainBlendMode == 1) blendedColor = blendMultiply(color, grainColor); else if (u_grainBlendMode == 2) blendedColor = blendScreen(color, grainColor); else if (u_grainBlendMode == 3) blendedColor = blendSoftLight(color, grainColor); else blendedColor = blendLinear(color, grainColor); return mix(color, blendedColor, u_grainIntensity); }
 
 void main() {
     vec2 uv = vUv;
@@ -390,10 +759,12 @@ void main() {
     float noise = fbm3D(vec3(p + u_turbulence * r, u_time * u_speed * 0.3), u_octaves, u_lacunarity, u_persistence);
     noise = noise * 0.5 + 0.5;
     
-    // Add subtle mouse interaction
-    vec2 mouse = u_mouse / u_resolution;
-    float mouseDist = distance(uv, mouse);
-    noise += sin(mouseDist * 8.0 - u_time * 3.0) * 0.05;
+    // Add subtle mouse interaction (if enabled)
+    if (u_mouseInteractionEnabled > 0.5) {
+        vec2 mouse = u_mouse / u_resolution;
+        float mouseDist = distance(uv, mouse);
+        noise += sin(mouseDist * 8.0 - u_time * 3.0) * 0.05;
+    }
     
     // Generate color from gradient texture or fallback to procedural
     vec3 color = texture2D(u_gradientTexture, vec2(noise, 0.5)).rgb;
@@ -404,7 +775,10 @@ void main() {
     // Add depth with secondary noise
     float depth = fbm3D(vec3(p * 0.5, u_time * u_speed * 0.1), 3, 2.0, 0.5) * 0.1;
     color = mix(color, color * 1.2, depth);
-    
+
+    // Apply advanced grain effect
+    color = applyGrain(color, uv, u_time);
+
     gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -424,11 +798,37 @@ uniform float u_scale;
 uniform float u_plasma_intensity;
 uniform sampler2D u_gradientTexture;
 
+// Grain uniforms
+uniform float u_grainIntensity;
+uniform float u_grainSize;
+uniform float u_grainSpeed;
+uniform float u_grainContrast;
+uniform int u_grainType;
+uniform int u_grainBlendMode;
+
+// Mouse interaction control
+uniform float u_mouseInteractionEnabled;
+
 varying vec2 vUv;
 
 ${simplexNoise2D}
 ${simplexNoise3D}
 ${colorUtils}
+
+// Compact grain system
+float grainRandom(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainRandomTime(vec2 st, float time) { return fract(sin(dot(st.xy + time, vec2(12.9898, 78.233))) * 43758.5453123); }
+float grainFilm(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain1 = grainRandomTime(floor(grainUV), time * u_grainSpeed); float grain2 = grainRandomTime(floor(grainUV + vec2(1.0, 0.0)), time * u_grainSpeed); float grain3 = grainRandomTime(floor(grainUV + vec2(0.0, 1.0)), time * u_grainSpeed); float grain4 = grainRandomTime(floor(grainUV + vec2(1.0, 1.0)), time * u_grainSpeed); vec2 f = fract(grainUV); float baseGrain = mix(mix(grain1, grain2, f.x), mix(grain3, grain4, f.x), f.y); float fineGrain = grainRandomTime(grainUV * 2.0, time * u_grainSpeed * 1.5) * 0.3; return pow(baseGrain * 0.7 + fineGrain, 0.8); }
+float grainDigital(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float baseNoise = grainRandomTime(floor(grainUV), time * u_grainSpeed); float temporalNoise = grainRandomTime(vec2(time * u_grainSpeed * 10.0), 0.0) * 0.1; return floor((baseNoise + temporalNoise) * 8.0) / 8.0; }
+float grainOrganic(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; float grain = 0.0; float amplitude = 1.0; for (int i = 0; i < 3; i++) { grain += grainRandomTime(grainUV, time * u_grainSpeed) * amplitude; grainUV *= 2.0; amplitude *= 0.5; } return grain / 1.875; }
+float grainAnimated(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize + sin(time * u_grainSpeed) * 0.1; float angle = time * u_grainSpeed * 0.5; mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle)); grainUV = rotation * grainUV; return grainRandomTime(grainUV, time * u_grainSpeed); }
+float grainHalftone(vec2 uv, float time) { vec2 grainUV = uv * u_grainSize; vec2 center = floor(grainUV) + 0.5; float dist = length(grainUV - center); float noise = grainRandomTime(center, time * u_grainSpeed); return smoothstep(0.3 * noise, 0.5 * noise, dist); }
+vec3 blendOverlay(vec3 base, vec3 blend) { return mix(2.0 * base * blend, 1.0 - 2.0 * (1.0 - base) * (1.0 - blend), step(0.5, base)); }
+vec3 blendMultiply(vec3 base, vec3 blend) { return base * blend; }
+vec3 blendScreen(vec3 base, vec3 blend) { return 1.0 - (1.0 - base) * (1.0 - blend); }
+vec3 blendSoftLight(vec3 base, vec3 blend) { vec3 result1 = 2.0 * base * blend + base * base * (1.0 - 2.0 * blend); vec3 result2 = sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend); return mix(result1, result2, step(0.5, blend)); }
+vec3 blendLinear(vec3 base, vec3 blend) { return base + (blend - 0.5); }
+vec3 applyGrain(vec3 color, vec2 uv, float time) { if (u_grainIntensity <= 0.0) return color; float grain = 0.0; if (u_grainType == 0) grain = grainFilm(uv, time); else if (u_grainType == 1) grain = grainDigital(uv, time); else if (u_grainType == 2) grain = grainOrganic(uv, time); else if (u_grainType == 3) grain = grainAnimated(uv, time); else if (u_grainType == 4) grain = grainHalftone(uv, time); grain = clamp(grain * u_grainContrast, 0.0, 1.0); vec3 grainColor = vec3(grain); vec3 blendedColor; if (u_grainBlendMode == 0) blendedColor = blendOverlay(color, grainColor); else if (u_grainBlendMode == 1) blendedColor = blendMultiply(color, grainColor); else if (u_grainBlendMode == 2) blendedColor = blendScreen(color, grainColor); else if (u_grainBlendMode == 3) blendedColor = blendSoftLight(color, grainColor); else blendedColor = blendLinear(color, grainColor); return mix(color, blendedColor, u_grainIntensity); }
 
 void main() {
     vec2 uv = vUv;
@@ -450,10 +850,12 @@ void main() {
     plasma = (plasma + 4.0) / 8.0;
     plasma = pow(plasma, u_plasma_intensity);
     
-    // Mouse interaction
-    vec2 mouse = u_mouse / u_resolution;
-    float mouseDist = distance(uv, mouse);
-    plasma += sin(mouseDist * 15.0 - time * 4.0) * 0.1;
+    // Mouse interaction (if enabled)
+    if (u_mouseInteractionEnabled > 0.5) {
+        vec2 mouse = u_mouse / u_resolution;
+        float mouseDist = distance(uv, mouse);
+        plasma += sin(mouseDist * 15.0 - time * 4.0) * 0.1;
+    }
     
     // Generate color from gradient texture or fallback to procedural
     vec3 color = texture2D(u_gradientTexture, vec2(plasma, 0.5)).rgb;
@@ -464,7 +866,10 @@ void main() {
     // Add glow effect
     float glow = 1.0 - smoothstep(0.0, 0.8, plasma);
     color += glow * u_color2 * 0.3;
-    
+
+    // Apply advanced grain effect
+    color = applyGrain(color, uv, u_time);
+
     gl_FragColor = vec4(color, 1.0);
 }
 `;

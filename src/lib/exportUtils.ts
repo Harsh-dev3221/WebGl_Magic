@@ -1,6 +1,8 @@
 // Export utilities for saving and loading shader configurations
 import { GradientConfig } from './color/gradients';
 import { ShaderType } from './shaderSystem';
+import { generateSmartHTML } from './export/smartHTMLExport';
+import { generateOptimizationReport } from './export/smartExport';
 import {
     classicGradientShader,
     vectorFlowShader,
@@ -33,6 +35,14 @@ export interface ShaderExportData {
 
     // Shader-specific Parameters
     shaderParams: {
+        // Core animation parameters
+        speed?: number;
+        scale?: number;
+        octaves?: number;
+        lacunarity?: number;
+        persistence?: number;
+
+        // Shader-specific parameters
         flowStrength?: number;      // vector
         turbulence?: number;        // turbulence
         plasmaIntensity?: number;   // plasma
@@ -42,6 +52,27 @@ export interface ShaderExportData {
         particleSize?: number;      // particle
         segments?: number;          // kaleidoscope
         rotation?: number;          // kaleidoscope
+
+        // Fluid Interactive parameters
+        brushSize?: number;         // fluidInteractive
+        brushStrength?: number;     // fluidInteractive
+        distortionAmount?: number;  // fluidInteractive
+        fluidDecay?: number;        // fluidInteractive
+        trailLength?: number;       // fluidInteractive
+        stopDecay?: number;         // fluidInteractive
+        colorIntensity?: number;    // fluidInteractive
+        softness?: number;          // fluidInteractive
+
+        // Grain parameters - CRITICAL FOR SMART EXPORT
+        grainIntensity?: number;
+        grainSize?: number;
+        grainSpeed?: number;
+        grainContrast?: number;
+        grainType?: number;
+        grainBlendMode?: number;
+
+        // Mouse interaction
+        mouseInteractionEnabled?: boolean;
     };
 
     // Gradient Configuration
@@ -71,10 +102,18 @@ export function generateFragmentShaderCode(shaderType: ShaderType): string {
         'plasma': plasmaShader,
         'fluid': fluidShader,
         'particle': particleShader,
-        'kaleidoscope': kaleidoscopeShader
+        'kaleidoscope': kaleidoscopeShader,
+        'fluidInteractive': '// Fluid Interactive shader requires dual-pass rendering system'
     };
 
     const actualShader = shaderMap[shaderType];
+
+    if (!actualShader) {
+        return `// Fragment Shader: ${shaderType} (not found)
+// Generated from Vector Field Studio
+
+const fragmentShader = \`// Shader not available for export\`;`;
+    }
 
     return `// Fragment Shader: ${shaderType}
 // Generated from Vector Field Studio - Exact reproduction
@@ -102,7 +141,8 @@ export function generateStandaloneHTML(exportData: ShaderExportData): string {
         'plasma': plasmaShader,
         'fluid': fluidShader,
         'particle': particleShader,
-        'kaleidoscope': kaleidoscopeShader
+        'kaleidoscope': kaleidoscopeShader,
+        'fluidInteractive': '// Fluid Interactive shader requires dual-pass rendering system'
     };
 
     const fragmentShaderSource = shaderMap[shaderType];
@@ -1201,8 +1241,8 @@ void main() {
         // Start the application
         init();
         
-        console.log('Full shader configuration:', exportedConfig);
-        console.log('NOTE: This is a simplified demo. Use the exported JS/JSON files for the complete implementation.');
+        // Full shader configuration loaded
+        // NOTE: This is a simplified demo. Use the exported JS/JSON files for the complete implementation.
     </script>
 </body>
 </html>`;
@@ -1310,5 +1350,95 @@ export function parseShareableURL(url: string): Partial<ShaderExportData> | null
     } catch (error) {
         console.error('Failed to parse shareable URL:', error);
         return null;
+    }
+}
+
+// 🚀 NEW: Smart Export System - Only includes necessary code!
+export function downloadSmartShaderExport(exportData: ShaderExportData, format: 'html' | 'js' | 'json' = 'html') {
+    // Convert to SmartExportData format with ALL studio settings
+    const smartExportData = {
+        shaderType: exportData.shaderType,
+        name: exportData.name,
+        gradient: exportData.gradient,
+        shaderParams: {
+            // Include ALL parameters from the studio
+            ...exportData.shaderParams,
+            // Ensure core parameters are included
+            speed: exportData.speed,
+            scale: exportData.scale,
+            octaves: exportData.octaves,
+            lacunarity: exportData.lacunarity,
+            persistence: exportData.persistence,
+        },
+        grainConfig: {
+            grainIntensity: exportData.shaderParams?.grainIntensity || 0,
+            grainSize: exportData.shaderParams?.grainSize || 100,
+            grainSpeed: exportData.shaderParams?.grainSpeed || 1,
+            grainContrast: exportData.shaderParams?.grainContrast || 1,
+            grainType: exportData.shaderParams?.grainType || 0,
+            grainBlendMode: exportData.shaderParams?.grainBlendMode || 0
+        },
+        mouseInteractionEnabled: exportData.shaderParams?.mouseInteractionEnabled !== false
+    };
+
+    // Debug: Log the complete export data to verify all values are captured
+    console.log('🎯 SMART EXPORT DEBUG - Complete Studio Settings:');
+    console.log('Shader Type:', smartExportData.shaderType);
+    console.log('Core Params:', {
+        speed: smartExportData.shaderParams.speed,
+        scale: smartExportData.shaderParams.scale,
+        octaves: smartExportData.shaderParams.octaves,
+        lacunarity: smartExportData.shaderParams.lacunarity,
+        persistence: smartExportData.shaderParams.persistence
+    });
+    console.log('Grain Config:', smartExportData.grainConfig);
+    console.log('Mouse Interaction:', smartExportData.mouseInteractionEnabled);
+    console.log('All Shader Params:', smartExportData.shaderParams);
+
+    let content: string;
+    let filename: string;
+    let mimeType: string;
+
+    switch (format) {
+        case 'html':
+            content = generateSmartHTML(smartExportData);
+            filename = `${exportData.name.replace(/\s+/g, '_')}_smart_shader.html`;
+            mimeType = 'text/html';
+            break;
+        case 'js':
+            // For now, fall back to regular JS export (can be enhanced later)
+            content = generateJavaScriptCode(exportData);
+            filename = `${exportData.name.replace(/\s+/g, '_')}_smart_shader.js`;
+            mimeType = 'text/javascript';
+            break;
+        case 'json':
+            // Enhanced JSON with optimization info
+            const optimizationReport = generateOptimizationReport(exportData.shaderType);
+            content = JSON.stringify({
+                ...exportData,
+                smartExport: true,
+                optimizationReport: optimizationReport
+            }, null, 2);
+            filename = `${exportData.name.replace(/\s+/g, '_')}_smart_config.json`;
+            mimeType = 'application/json';
+            break;
+        default:
+            throw new Error(`Unsupported export format: ${format}`);
+    }
+
+    // Create and trigger download
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    // Log optimization info to console
+    if (format === 'html') {
+        console.log(generateOptimizationReport(exportData.shaderType));
     }
 }

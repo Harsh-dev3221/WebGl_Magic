@@ -34,7 +34,8 @@ import {
     generateShareableURL,
     generateThreeJSSetup,
     generateHTMLTemplate,
-    generateFragmentShaderCode
+    generateFragmentShaderCode,
+    downloadSmartShaderExport
 } from '@/lib/exportUtils';
 import { ShaderType } from '@/lib/shaderSystem';
 import { GradientConfig } from '@/lib/color/gradients';
@@ -44,11 +45,14 @@ interface ExportDialogProps {
     shaderType: ShaderType;
     gradientConfig: GradientConfig;
     shaderParams: {
+        // Core animation parameters
         speed: number;
         scale: number;
         octaves: number;
         lacunarity: number;
         persistence: number;
+
+        // Shader-specific parameters
         flowStrength?: number;
         turbulence?: number;
         plasmaIntensity?: number;
@@ -58,6 +62,27 @@ interface ExportDialogProps {
         particleSize?: number;
         segments?: number;
         rotation?: number;
+
+        // Fluid Interactive parameters
+        brushSize?: number;
+        brushStrength?: number;
+        distortionAmount?: number;
+        fluidDecay?: number;
+        trailLength?: number;
+        stopDecay?: number;
+        colorIntensity?: number;
+        softness?: number;
+
+        // Grain parameters
+        grainIntensity?: number;
+        grainSize?: number;
+        grainSpeed?: number;
+        grainContrast?: number;
+        grainType?: number;
+        grainBlendMode?: number;
+
+        // Mouse interaction
+        mouseInteractionEnabled?: boolean;
     };
     isPlaying: boolean;
     children: React.ReactNode;
@@ -109,6 +134,14 @@ export function ExportDialog({
             lacunarity: shaderParams.lacunarity,
             persistence: shaderParams.persistence,
             shaderParams: {
+                // Core parameters
+                speed: shaderParams.speed,
+                scale: shaderParams.scale,
+                octaves: shaderParams.octaves,
+                lacunarity: shaderParams.lacunarity,
+                persistence: shaderParams.persistence,
+
+                // Shader-specific parameters
                 flowStrength: shaderParams.flowStrength,
                 turbulence: shaderParams.turbulence,
                 plasmaIntensity: shaderParams.plasmaIntensity,
@@ -118,6 +151,27 @@ export function ExportDialog({
                 particleSize: shaderParams.particleSize,
                 segments: shaderParams.segments,
                 rotation: shaderParams.rotation,
+
+                // Fluid Interactive parameters
+                brushSize: shaderParams.brushSize,
+                brushStrength: shaderParams.brushStrength,
+                distortionAmount: shaderParams.distortionAmount,
+                fluidDecay: shaderParams.fluidDecay,
+                trailLength: shaderParams.trailLength,
+                stopDecay: shaderParams.stopDecay,
+                colorIntensity: shaderParams.colorIntensity,
+                softness: shaderParams.softness,
+
+                // Grain parameters - CRITICAL FOR SMART EXPORT
+                grainIntensity: shaderParams.grainIntensity,
+                grainSize: shaderParams.grainSize,
+                grainSpeed: shaderParams.grainSpeed,
+                grainContrast: shaderParams.grainContrast,
+                grainType: shaderParams.grainType,
+                grainBlendMode: shaderParams.grainBlendMode,
+
+                // Mouse interaction
+                mouseInteractionEnabled: shaderParams.mouseInteractionEnabled,
             },
             gradient: gradientConfig,
             generatedCode: {
@@ -133,6 +187,12 @@ export function ExportDialog({
     const handleDownload = useCallback((format: 'json' | 'js' | 'html') => {
         const data = createExportData();
         downloadExport(data, { format, includeCode: true });
+    }, [createExportData]);
+
+    // Handle smart downloads (optimized)
+    const handleSmartDownload = useCallback((format: 'json' | 'js' | 'html') => {
+        const data = createExportData();
+        downloadSmartShaderExport(data, format);
     }, [createExportData]);
 
     // Handle copy to clipboard
@@ -251,7 +311,58 @@ export function ExportDialog({
                         </TabsList>
 
                         <TabsContent value="download" className="space-y-4">
-                            <h4 className="font-medium">Download Files</h4>
+                            {/* Smart Export Section */}
+                            <div className="bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-950/20 dark:to-blue-950/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                                <div className="flex items-center gap-2 mb-3">
+                                    <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                                        🚀 NEW
+                                    </Badge>
+                                    <h4 className="font-medium text-green-800 dark:text-green-200">Smart Export (Optimized)</h4>
+                                </div>
+                                <p className="text-sm text-green-700 dark:text-green-300 mb-4">
+                                    Only includes the code your shader actually needs. Reduces file size by 60-70%!
+                                </p>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <Button
+                                        onClick={() => handleSmartDownload('html')}
+                                        className="flex items-center gap-2 h-auto p-4 flex-col bg-green-600 text-white hover:bg-green-700"
+                                    >
+                                        <Globe className="w-6 h-6" />
+                                        <div className="text-center">
+                                            <div className="font-medium">Smart HTML</div>
+                                            <div className="text-xs opacity-90">Minimal & Clean</div>
+                                        </div>
+                                    </Button>
+
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => handleSmartDownload('json')}
+                                        className="flex items-center gap-2 h-auto p-4 flex-col border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/20"
+                                    >
+                                        <FileJson className="w-6 h-6" />
+                                        <div className="text-center">
+                                            <div className="font-medium">Smart JSON</div>
+                                            <div className="text-xs text-muted-foreground">With optimization report</div>
+                                        </div>
+                                    </Button>
+
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => handleSmartDownload('js')}
+                                        className="flex items-center gap-2 h-auto p-4 flex-col border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/20"
+                                    >
+                                        <FileCode className="w-6 h-6" />
+                                        <div className="text-center">
+                                            <div className="font-medium">Smart JS</div>
+                                            <div className="text-xs text-muted-foreground">Optimized code</div>
+                                        </div>
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <Separator />
+
+                            <h4 className="font-medium">Standard Export</h4>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 {/* HTML Export - Primary Option */}
                                 <Button
