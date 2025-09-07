@@ -55,8 +55,7 @@ export const ShaderStudio = () => {
       {/* Canvas */}
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
-        style={{ display: 'block' }}
+        className="absolute inset-0 w-full h-full block"
       />
 
       {/* Header */}

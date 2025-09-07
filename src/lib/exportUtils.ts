@@ -1353,6 +1353,132 @@ export function parseShareableURL(url: string): Partial<ShaderExportData> | null
     }
 }
 
+// Generate a standalone JavaScript module containing the shader configuration & setup
+export function generateJavaScriptCode(exportData: ShaderExportData): string {
+    const fragmentShaderCode = generateFragmentShaderCode(exportData.shaderType);
+    const fragmentShaderEscaped = fragmentShaderCode.replace(/`/g, '\\`');
+    const gradientConfig = JSON.stringify(exportData.gradient, null, 2).replace(/`/g, '\\`');
+    const fullConfig = JSON.stringify(exportData, null, 2).replace(/`/g, '\\`');
+
+    return `// ==============================
+// Auto-generated Shader Export
+// Source: Vector Field Studio
+// ==============================
+import * as THREE from 'three';
+
+// Full original export data (metadata + params)
+export const exportedData = ${fullConfig};
+
+// Gradient configuration (extracted for convenience)
+export const gradientConfig = ${gradientConfig};
+
+${fragmentShaderEscaped}
+
+// Minimal vertex shader
+const vertexShader = 'varying vec2 vUv;\\nvoid main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }';
+
+// Create a 1D gradient texture from gradientConfig
+function createGradientTexture(config){
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    const g = ctx.createLinearGradient(0,0,canvas.width,0);
+    config.stops.sort((a,b)=>a.position-b.position).forEach(stop=>{
+        const c = 'rgb(' + Math.round(stop.color.r*255) + ',' + Math.round(stop.color.g*255) + ',' + Math.round(stop.color.b*255) + ')';
+        g.addColorStop(stop.position, c);
+    });
+    ctx.fillStyle = g; ctx.fillRect(0,0,canvas.width,canvas.height);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    return tex;
+}
+
+export function initShader(canvas, options = {}) {
+    const data = exportedData; // convenience
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+
+    const gradientTexture = createGradientTexture(gradientConfig);
+
+    const uniforms = {
+        u_time: { value: 0 },
+        u_resolution: { value: new THREE.Vector2(renderer.domElement.width, renderer.domElement.height) },
+        u_mouse: { value: new THREE.Vector2(0.5,0.5) },
+        u_speed: { value: data.speed },
+        u_scale: { value: data.scale },
+        u_octaves: { value: data.octaves },
+        u_lacunarity: { value: data.lacunarity },
+        u_persistence: { value: data.persistence },
+        u_gradientTexture: { value: gradientTexture }
+    };
+
+    // Inject shader-specific params
+    Object.entries(data.shaderParams || {}).forEach(([k,v])=>{
+        const uniformName = 'u_' + k;
+        if(v !== undefined && (uniforms as any)[uniformName] === undefined){
+            (uniforms as any)[uniformName] = { value: v };
+        }
+    });
+
+    const material = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, side: THREE.DoubleSide });
+    const geometry = new THREE.PlaneGeometry(2,2);
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+
+    let playing = data.isPlaying;
+    function animate(){
+        if(playing){ (uniforms as any).u_time.value = performance.now() * 0.001; }
+        renderer.render(scene, camera);
+        requestAnimationFrame(animate);
+    }
+    animate();
+
+    // Resize handling
+    function handleResize(){
+        const w = canvas.clientWidth || window.innerWidth;
+        const h = canvas.clientHeight || window.innerHeight;
+        renderer.setSize(w,h,false);
+        (uniforms as any).u_resolution.value.set(w,h);
+    }
+    window.addEventListener('resize', handleResize);
+
+    // Mouse interaction (normalized)
+    function handleMouse(e: MouseEvent){
+        (uniforms as any).u_mouse.value.x = e.clientX / window.innerWidth;
+        (uniforms as any).u_mouse.value.y = 1 - e.clientY / window.innerHeight;
+    }
+    window.addEventListener('mousemove', handleMouse);
+
+    return {
+        scene, camera, renderer, mesh, uniforms,
+        play(){ playing = true; },
+        pause(){ playing = false; },
+        dispose(){
+            window.removeEventListener('resize', handleResize);
+            window.removeEventListener('mousemove', handleMouse);
+            geometry.dispose();
+            material.dispose();
+            gradientTexture.dispose();
+            renderer.dispose();
+        }
+    };
+}
+
+// Optional auto-init if a canvas with id 'shader-canvas' exists
+if (typeof window !== 'undefined') {
+    const autoCanvas = document.getElementById('shader-canvas');
+    if(autoCanvas instanceof HTMLCanvasElement){
+        initShader(autoCanvas);
+    }
+}
+`;
+}
+
 // 🚀 NEW: Smart Export System - Only includes necessary code!
 export function downloadSmartShaderExport(exportData: ShaderExportData, format: 'html' | 'js' | 'json' = 'html') {
     // Convert to SmartExportData format with ALL studio settings

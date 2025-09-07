@@ -345,8 +345,12 @@ export class ShaderSystem {
   }
 
   private getFragmentShaderForType(type: ShaderType): string {
-    let fragmentShader: string;
+    // Early return for fluidInteractive to avoid unreachable comparison warning
+    if (type === 'fluidInteractive') {
+      return ''; // Handled externally by FluidSystem
+    }
 
+    let fragmentShader: string;
     switch (type) {
       case 'classic':
         fragmentShader = classicGradientShader;
@@ -369,17 +373,12 @@ export class ShaderSystem {
       case 'kaleidoscope':
         fragmentShader = kaleidoscopeShader;
         break;
-      case 'fluidInteractive':
-        return ''; // Handled by FluidSystem
       default:
         fragmentShader = classicGradientShader;
     }
 
-    // Add universal grain support to all shaders (except fluidInteractive)
-    if (type !== 'fluidInteractive') {
-      fragmentShader = addGrainToShader(fragmentShader);
-    }
-
+    // Add universal grain support (applies to all non-interactive shaders)
+    fragmentShader = addGrainToShader(fragmentShader);
     return fragmentShader;
   }
 

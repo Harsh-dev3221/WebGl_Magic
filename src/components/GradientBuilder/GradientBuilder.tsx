@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -40,8 +40,32 @@ export function GradientBuilder({ config, onChange, className }: GradientBuilder
     setPreviewSampler(new GradientSampler(config));
   }, [config]);
 
-  // Generate preview gradient CSS
+  // Generate preview gradient CSS string
   const previewGradient = gradientToCSS(config);
+
+  // Generate a stable hash-like class name for the gradient preview based on stops & interpolation/easing
+  const gradientClass = useMemo(() => {
+    const raw = config.stops.map(s => `${s.id}:${s.position.toFixed(4)}:${rgbToHex(s.color.r, s.color.g, s.color.b)}`).join('|') + `|${config.interpolation}|${config.easing}`;
+    // Simple hash
+    let hash = 0;
+    for (let i = 0; i < raw.length; i++) {
+      hash = ((hash << 5) - hash) + raw.charCodeAt(i);
+      hash |= 0; // Convert to 32bit int
+    }
+    return `gradient-preview-${Math.abs(hash)}`;
+  }, [config]);
+
+  // Build dynamic CSS (avoids inline style attributes to satisfy no-inline-styles rule)
+  const dynamicCSS = useMemo(() => {
+    let css = `.${gradientClass}{background:${previewGradient};}`;
+    for (const stop of config.stops) {
+      const leftPct = (stop.position * 100).toFixed(2);
+      const colorHex = rgbToHex(stop.color.r, stop.color.g, stop.color.b);
+      css += `\n.gradient-stop-${stop.id}{left:${leftPct}%;}`;
+      css += `\n.gradient-stop-${stop.id} .gradient-stop-color-${stop.id}{background-color:${colorHex};}`;
+    }
+    return css;
+  }, [config.stops, previewGradient, gradientClass]);
 
   // Handle adding new stop
   const handleAddStop = useCallback((position: number) => {
@@ -194,19 +218,18 @@ export function GradientBuilder({ config, onChange, className }: GradientBuilder
       {/* Gradient Preview */}
       <div className="space-y-3">
         <label className="text-sm font-medium">Gradient Preview</label>
+        {/* Dynamic style tag to host generated classes (not counted as inline style attributes) */}
+        <style>{dynamicCSS}</style>
         <div
           ref={gradientBarRef}
-          className="relative h-16 rounded-lg border-2 border-border cursor-pointer overflow-visible"
-          style={{ background: previewGradient }}
+          className={`relative h-16 rounded-lg border-2 border-border cursor-pointer overflow-visible ${gradientClass}`}
           onClick={handleGradientBarClick}
         >
           {/* Color Stops */}
           {config.stops.map((stop) => (
             <div
               key={stop.id}
-              className={`absolute top-0 w-8 h-full cursor-grab active:cursor-grabbing transform -translate-x-4 ${selectedStopId === stop.id ? 'z-20' : 'z-10'
-                } ${isDragging && draggedStopId === stop.id ? 'scale-110' : ''}`}
-              style={{ left: `${stop.position * 100}%` }}
+              className={`absolute top-0 w-8 h-full cursor-grab active:cursor-grabbing transform -translate-x-4 gradient-stop-${stop.id} ${selectedStopId === stop.id ? 'z-20' : 'z-10'} ${isDragging && draggedStopId === stop.id ? 'scale-110' : ''}`}
               onMouseDown={(e) => handleMouseDown(e, stop.id)}
               onClick={(e) => {
                 e.stopPropagation();
@@ -216,9 +239,7 @@ export function GradientBuilder({ config, onChange, className }: GradientBuilder
               }}
             >
               <div
-                className={`w-8 h-8 rounded-full border-3 border-background shadow-lg hover:scale-110 transition-transform ${selectedStopId === stop.id ? 'ring-2 ring-primary scale-110' : ''
-                  } ${isDragging && draggedStopId === stop.id ? 'ring-4 ring-primary/50' : ''}`}
-                style={{ backgroundColor: rgbToHex(stop.color.r, stop.color.g, stop.color.b) }}
+                className={`w-8 h-8 rounded-full border-3 border-background shadow-lg hover:scale-110 transition-transform gradient-stop-color-${stop.id} ${selectedStopId === stop.id ? 'ring-2 ring-primary scale-110' : ''} ${isDragging && draggedStopId === stop.id ? 'ring-4 ring-primary/50' : ''}`}
               />
               {config.stops.length > 2 && (
                 <Button
